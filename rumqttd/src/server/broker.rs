@@ -35,7 +35,7 @@ use std::{io, thread};
 
 use crate::link::console;
 use crate::link::local::{self, LinkRx, LinkTx};
-use crate::router::{Event, Router};
+use crate::router::{ConnectionInfo, Event, Router};
 use crate::{Config, ConnectionId, ServerSettings};
 
 use tokio::net::{TcpListener, TcpStream};
@@ -135,6 +135,11 @@ impl Broker {
     //     }
     // }
 
+    /// Get a clone of the router event sender.
+    pub fn router_tx(&self) -> Sender<(ConnectionId, Event)> {
+        self.router_tx.clone()
+    }
+
     // Link to get meters
     pub fn meters(&self) -> Result<meters::MetersLink, meters::LinkError> {
         let link = meters::MetersLink::new(self.router_tx.clone())?;
@@ -153,6 +158,14 @@ impl Broker {
         let (link_tx, link_rx, _ack) =
             LinkBuilder::new(client_id, self.router_tx.clone()).build()?;
         Ok((link_tx, link_rx))
+    }
+
+    /// 获取当前所有活跃连接的信息列表
+    pub fn get_connections(&self) -> Result<Vec<ConnectionInfo>, Error> {
+        let (tx, rx) = flume::bounded(1);
+        self.router_tx
+            .send((0, Event::GetConnections(tx)))?;
+        rx.recv().map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self))]
@@ -435,6 +448,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                             stream,
                             protocol,
                             self.awaiting_will_handler.clone(),
+                            addr,
                         )
                         .instrument(tracing::info_span!(
                             "websocket_link",
@@ -451,6 +465,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                         network,
                         protocol,
                         self.awaiting_will_handler.clone(),
+                        addr,
                     )
                     .instrument(tracing::error_span!(
                         "remote_link",
@@ -496,6 +511,7 @@ async fn remote<P: Protocol>(
     stream: Box<dyn N>,
     protocol: P,
     will_handlers: Arc<Mutex<HashMap<String, Sender<AwaitingWill>>>>,
+    peer_addr: SocketAddr,
 ) {
     let mut network = Network::new(
         stream,
@@ -558,6 +574,7 @@ async fn remote<P: Protocol>(
         connect_packet,
         dynamic_filters,
         assigned_client_id,
+        Some(peer_addr),
     )
     .await
     {

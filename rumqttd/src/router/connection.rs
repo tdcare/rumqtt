@@ -27,6 +27,8 @@ pub struct Connection {
     pub last_will_properties: Option<LastWillProperties>,
     /// Connection events
     pub events: ConnectionEvents,
+    /// Peer address (IP:port) of the remote client
+    pub peer_addr: Option<String>,
     /// Topic aliases set by clients
     pub(crate) topic_aliases: HashMap<u16, Topic>,
     /// Topic aliases used by broker
@@ -63,6 +65,7 @@ impl Connection {
             last_will: None,
             last_will_properties: None,
             events: ConnectionEvents::default(),
+            peer_addr: None,
             topic_aliases: HashMap::new(),
             broker_topic_aliases: None,
             subscription_ids: HashMap::new(),

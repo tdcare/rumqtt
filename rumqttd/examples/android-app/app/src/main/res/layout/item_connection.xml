@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    客户端连接列表项布局
+    卡片式布局，完整显示每个 MQTT 客户端的连接信息
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@android:color/white"
+    android:elevation="2dp"
+    android:padding="12dp">
+
+    <!-- 第一行：客户端ID + IP地址 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:id="@+id/tv_client_id"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="客户端ID"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:ellipsize="end"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/tv_peer_addr"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="IP地址"
+            android:textSize="12sp"
+            android:textColor="#666666" />
+    </LinearLayout>
+
+    <!-- 第二行：状态标签 + 连接ID -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:id="@+id/tv_conn_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="就绪"
+            android:textSize="12sp"
+            android:textColor="#FFFFFF"
+            android:background="#4CAF50"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp" />
+
+        <TextView
+            android:id="@+id/tv_connection_id"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="连接ID: 0"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:layout_marginStart="12dp" />
+    </LinearLayout>
+
+    <!-- 第三行：订阅主题列表 -->
+    <TextView
+        android:id="@+id/tv_subscriptions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="订阅主题: 无"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:layout_marginBottom="4dp"
+        android:maxLines="3"
+        android:ellipsize="end" />
+
+    <!-- 第四行：收发统计 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tv_incoming"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="接收: 0条/0 B"
+            android:textSize="12sp"
+            android:textColor="#4CAF50" />
+
+        <TextView
+            android:id="@+id/tv_outgoing"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="发送: 0条/0 B"
+            android:textSize="12sp"
+            android:textColor="#1976D2" />
+    </LinearLayout>
+
+</LinearLayout>

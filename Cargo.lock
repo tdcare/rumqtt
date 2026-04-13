@@ -2270,6 +2270,7 @@ dependencies = [
  "tokio-native-tls",
  "tokio-rustls 0.25.0",
  "tokio-util",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "uuid",

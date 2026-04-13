@@ -25,7 +25,7 @@ use super::logs::{AckLog, DataLog};
 use super::scheduler::{ScheduleReason, Scheduler};
 use super::shared_subs::SharedGroup;
 use super::{
-    packetid, Connection, DataRequest, Event, FilterIdx, Meter, Notification, Print, RouterMeter,
+    packetid, Connection, ConnectionInfo, DataRequest, Event, FilterIdx, Meter, Notification, Print, RouterMeter,
     ShadowRequest, MAX_CHANNEL_CAPACITY, MAX_SCHEDULE_ITERATIONS,
 };
 
@@ -261,6 +261,42 @@ impl Router {
                 #[cfg(feature = "validate-tenant-prefix")]
                 _tenant_id,
             ),
+            Event::GetConnections(tx) => {
+                let mut connections_info = Vec::new();
+                for (id, connection) in self.connections.iter() {
+                    let mut info = ConnectionInfo {
+                        connection_id: id,
+                        client_id: connection.client_id.clone(),
+                        subscriptions: connection.subscriptions.iter().cloned().collect(),
+                        incoming_publish_count: 0,
+                        incoming_publish_size: 0,
+                        outgoing_publish_count: 0,
+                        outgoing_publish_size: 0,
+                        status: String::from("Unknown"),
+                        peer_addr: connection.peer_addr.clone().unwrap_or_default(),
+                    };
+
+                    // 从 ibufs 获取入站指标
+                    if let Some(incoming) = self.ibufs.get(id) {
+                        info.incoming_publish_count = incoming.meter.get_total_count();
+                        info.incoming_publish_size = incoming.meter.get_total_size();
+                    }
+
+                    // 从 obufs 获取出站指标
+                    if let Some(outgoing) = self.obufs.get(id) {
+                        info.outgoing_publish_count = outgoing.meter.publish_count;
+                        info.outgoing_publish_size = outgoing.meter.total_size;
+                    }
+
+                    // 从 scheduler 获取状态
+                    if let Some(tracker) = self.scheduler.trackers.get(id) {
+                        info.status = format!("{:?}", tracker.status);
+                    }
+
+                    connections_info.push(info);
+                }
+                tx.send(connections_info).ok();
+            }
         }
     }
 
@@ -475,11 +511,13 @@ impl Router {
         });
 
         // Remove this connection from subscriptions
+        let sub_count = connection.subscriptions.len();
         for filter in connection.subscriptions.iter() {
             if let Some(connections) = self.subscription_map.get_mut(filter) {
                 connections.remove(&id);
             }
         }
+        self.router_meters.total_subscriptions = self.router_meters.total_subscriptions.saturating_sub(sub_count);
 
         // Add disconnection event to metrics
         let time = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -688,7 +726,11 @@ impl Router {
                         // this is because we do want to treat is as diffrent subscription
                         // and create DataRequest, while using the same datalog of "topic"
                         // NOTE: topic & $share/group/topic will have same filteridx!
+                        let is_new = !self.connections.get(id).unwrap().subscriptions.contains(&filter);
                         self.prepare_filter(id, cursor, idx, f, group, subscription_id);
+                        if is_new {
+                            self.router_meters.total_subscriptions += 1;
+                        }
 
                         let code = match f.qos {
                             QoS::AtMostOnce => SubscribeReasonCode::QoS0,
@@ -731,6 +773,7 @@ impl Router {
                                 );
                                 continue;
                             }
+                            self.router_meters.total_subscriptions = self.router_meters.total_subscriptions.saturating_sub(1);
 
                             // Remove connections from all groups
                             // discard empty group ( group with no client )
@@ -817,6 +860,9 @@ impl Router {
                             break;
                         }
                     };
+
+                    // QoS 2: count the publish that was deferred from the Publish phase
+                    self.router_meters.total_publishes += 1;
 
                     // Try to append publish to commitlog
                     match append_to_commitlog(

@@ -11,6 +11,10 @@ repository.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+name = "rumqttd"
+crate-type = ["lib", "cdylib", "staticlib"]
+
 [dependencies]
 tokio = { version = "1.36", features = ["rt", "time", "net", "io-util", "macros"]}
 serde = { version = "1.0.196", features = ["derive"] }
@@ -39,6 +43,7 @@ axum = "0.7.4"
 rand = "0.8.5"
 uuid = { version = "1.7.0", features = ["v4", "fast-rng"] }
 subtle = "2.5"
+toml = "0.8"
 
 [features]
 default = ["use-rustls", "websocket"]

@@ -30,6 +30,20 @@ pub use connection::Connection;
 pub use routing::Router;
 pub use waiters::Waiters;
 
+/// 连接信息，用于外部查询
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConnectionInfo {
+    pub connection_id: ConnectionId,
+    pub client_id: String,
+    pub subscriptions: Vec<String>,
+    pub incoming_publish_count: usize,
+    pub incoming_publish_size: usize,
+    pub outgoing_publish_count: usize,
+    pub outgoing_publish_size: usize,
+    pub status: String,
+    pub peer_addr: String,
+}
+
 pub const MAX_SCHEDULE_ITERATIONS: usize = 100;
 pub const MAX_CHANNEL_CAPACITY: usize = 200;
 
@@ -65,6 +79,8 @@ pub enum Event {
     PrintStatus(Print),
     /// Publish Will message
     PublishWill((String, Option<String>)),
+    /// Query all active connections
+    GetConnections(flume::Sender<Vec<ConnectionInfo>>),
 }
 
 /// Notification from router to connection
@@ -281,25 +297,21 @@ pub struct RouterMeter {
 
 impl RouterMeter {
     pub fn get(&mut self) -> Option<Self> {
-        if self.total_publishes > 0 || self.failed_publishes > 0 {
+        if self.total_connections > 0
+            || self.total_subscriptions > 0
+            || self.total_publishes > 0
+            || self.failed_publishes > 0
+        {
             self.timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
             self.sequence += 1;
 
-            let meter = self.clone();
-            self.reset();
-
-            Some(meter)
+            Some(self.clone())
         } else {
             None
         }
-    }
-
-    fn reset(&mut self) {
-        self.total_publishes = 0;
-        self.failed_publishes = 0;
     }
 }
 

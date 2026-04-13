@@ -10,6 +10,7 @@ use flume::{RecvError, SendError, Sender, TrySendError};
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
@@ -68,6 +69,7 @@ impl<P: Protocol> RemoteLink<P> {
         connect_packet: Packet,
         dynamic_filters: bool,
         assigned_client_id: Option<String>,
+        peer_addr: Option<SocketAddr>,
     ) -> Result<RemoteLink<P>, Error> {
         let Packet::Connect(connect, props, lastwill, lastwill_props, _) = connect_packet else {
             return Err(Error::NotConnectPacket(connect_packet));
@@ -100,6 +102,7 @@ impl<P: Protocol> RemoteLink<P> {
             .last_will_properties(lastwill_props)
             .dynamic_filters(dynamic_filters)
             .topic_alias_max(topic_alias_max.unwrap_or(0))
+            .peer_addr(peer_addr.map(|a| a.to_string()))
             .build()?;
 
         let id = link_rx.id();
