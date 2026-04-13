@@ -32,7 +32,7 @@ use tracing::*;
 use crate::{
     link::{local::LinkError, network::Network},
     local::LinkBuilder,
-    protocol::{self, Connect, Packet, PingReq, Protocol, QoS, RetainForwardRule, Subscribe},
+    protocol::{self, Connect, Login, Packet, PingReq, Protocol, QoS, RetainForwardRule, Subscribe},
     router::Event,
     BridgeConfig, ConnectionId, Notification, Transport,
 };
@@ -43,6 +43,15 @@ use super::network;
 use super::network::N;
 #[cfg(feature = "use-rustls")]
 use crate::ClientAuth;
+
+#[cfg(feature = "websocket")]
+use async_tungstenite::tokio::client_async_with_config;
+#[cfg(feature = "websocket")]
+use async_tungstenite::tungstenite::client::IntoClientRequest;
+#[cfg(feature = "websocket")]
+use async_tungstenite::tungstenite::protocol::WebSocketConfig;
+#[cfg(feature = "websocket")]
+use ws_stream_tungstenite::WsStream;
 
 pub async fn start<P>(
     config: BridgeConfig,
@@ -55,6 +64,8 @@ where
     let span = tracing::info_span!("bridge_link");
     let _guard = span.enter();
 
+    eprintln!("[bridge] Starting bridge '{}' -> {} sub='{}' transport={:?}",
+        config.name, config.addr, config.sub_path, config.transport);
     info!(
         client_id = config.name,
         remote_addr = &config.addr,
@@ -69,13 +80,16 @@ where
         let mut network = match network_connect(&config, &config.addr, protocol.clone()).await {
             Ok(v) => v,
             Err(e) => {
+                eprintln!("[bridge] Connection error: {:?}", e);
                 error!(error=?e, "Error, retrying");
                 sleep(Duration::from_secs(config.reconnection_delay)).await;
                 continue;
             }
         };
         info!(remote_addr = &config.addr, "Connected to remote");
+        eprintln!("[bridge] TCP/WS connected to {}", config.addr);
         if let Err(e) = network_init(&config, &mut network).await {
+            eprintln!("[bridge] network_init error: {:?}", e);
             warn!(
                 "Unable to connect and subscribe to remote broker, reconnecting - {}",
                 e
@@ -86,6 +100,7 @@ where
 
         let ping_req = Packet::PingReq(PingReq);
         debug!("Received suback from {}", &config.addr);
+        eprintln!("[bridge] CONNECT+SUBSCRIBE OK, entering main loop for {}", config.addr);
 
         let mut ping_time = Instant::now();
         let mut timeout = sleep_until(ping_time + Duration::from_secs(config.ping_delay));
@@ -107,7 +122,11 @@ where
 
                     match packet {
                         Packet::Publish(publish, publish_prop) => {
-                            tx.send(Packet::Publish(publish, publish_prop)).await?;
+                            if let Err(e) = tx.send(Packet::Publish(publish, publish_prop)).await {
+                                error!(error=?e, "Failed to forward publish to local router, reconnecting");
+                                sleep(Duration::from_secs(config.reconnection_delay)).await;
+                                continue 'outer;
+                            }
                         }
                         Packet::PingResp(_) => ping_unacked = false,
                         // TODO: Handle incoming pubrel incase of QoS subscribe
@@ -126,9 +145,13 @@ where
                     if let Some(notif) = notif {
                         match notif {
                             Notification::DeviceAck(ack) => {
-                                network.write(ack.into()).await?;
+                                if let Err(e) = network.write(ack.into()).await {
+                                    warn!("Failed to write ack to remote, reconnecting - {}", e);
+                                    sleep(Duration::from_secs(config.reconnection_delay)).await;
+                                    continue 'outer;
+                                }
                             },
-                            _ => unreachable!("We should only get device acks"),
+                            other => warn!("Unexpected notification from router: {:?}", other),
                         }
 
                     }
@@ -191,6 +214,75 @@ async fn network_connect<P: Protocol>(
         Transport::Tls { .. } => {
             panic!("Need to enable use-rustls feature to use tls");
         }
+        #[cfg(feature = "websocket")]
+        Transport::Ws => {
+            eprintln!("[bridge] WS: connecting TCP to {}", addr);
+            let tcp = TcpStream::connect(addr).await?;
+            eprintln!("[bridge] WS: TCP connected, starting WebSocket handshake");
+            let ws_path = config.ws_path.as_deref().unwrap_or("/mqtt");
+            let url = format!("ws://{}{}", addr, ws_path);
+            eprintln!("[bridge] WS: url={}", url);
+            let mut request = url.into_client_request().map_err(|e| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("WebSocket request error: {}", e))
+            })?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                "mqtt".parse().unwrap(),
+            );
+            let ws_config = WebSocketConfig {
+                max_frame_size: Some(config.connections.max_payload_size),
+                ..Default::default()
+            };
+            let (ws_stream, _response) = client_async_with_config(request, tcp, Some(ws_config))
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, format!("WebSocket handshake error: {}", e)))?;
+            eprintln!("[bridge] WS: handshake OK");
+            let ws_stream = WsStream::new(ws_stream);
+            Ok(Network::new(
+                Box::new(ws_stream),
+                config.connections.max_payload_size,
+                config.connections.max_inflight_count,
+                protocol,
+            ))
+        }
+        #[cfg(not(feature = "websocket"))]
+        Transport::Ws => {
+            panic!("Need to enable websocket feature to use ws transport");
+        }
+        #[cfg(all(feature = "use-rustls", feature = "websocket"))]
+        Transport::Wss { ca, client_auth } => {
+            let tcp = TcpStream::connect(addr).await?;
+            let host = addr.split(':').next().unwrap();
+            let tls_stream = tls_connect(host, &ca, client_auth, tcp).await?;
+
+            let ws_path = config.ws_path.as_deref().unwrap_or("/mqtt");
+            let url = format!("wss://{}{}", addr, ws_path);
+            let mut request = url.into_client_request().map_err(|e| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("WebSocket request error: {}", e))
+            })?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                "mqtt".parse().unwrap(),
+            );
+            let ws_config = WebSocketConfig {
+                max_frame_size: Some(config.connections.max_payload_size),
+                ..Default::default()
+            };
+            let (ws_stream, _response) = client_async_with_config(request, tls_stream, Some(ws_config))
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, format!("WSS handshake error: {}", e)))?;
+            let ws_stream = WsStream::new(ws_stream);
+            Ok(Network::new(
+                Box::new(ws_stream),
+                config.connections.max_payload_size,
+                config.connections.max_inflight_count,
+                protocol,
+            ))
+        }
+        #[cfg(not(all(feature = "use-rustls", feature = "websocket")))]
+        Transport::Wss { .. } => {
+            panic!("Need to enable both use-rustls and websocket features to use wss transport");
+        }
     }
 }
 
@@ -245,15 +337,36 @@ async fn network_init<P: Protocol>(
     config: &BridgeConfig,
     network: &mut Network<P>,
 ) -> Result<(), BridgeError> {
+    // Use ping_delay as keep_alive so the remote server's keepalive timeout
+    // (1.5x keep_alive) is consistent with our actual ping interval.
+    let keep_alive = config.ping_delay as u16;
     let connect = Connect {
-        keep_alive: 10,
+        keep_alive,
         client_id: config.name.clone(),
         clean_session: true,
     };
-    let packet = Packet::Connect(connect, None, None, None, None);
+
+    let login = config.username.as_ref().map(|u| Login {
+        username: u.clone(),
+        password: config.password.clone().unwrap_or_default(),
+    });
+
+    eprintln!("[bridge] network_init: sending CONNECT client_id='{}' keep_alive={} login={:?}",
+        config.name, keep_alive, login.as_ref().map(|l| &l.username));
+
+    let packet = Packet::Connect(connect, None, None, None, login);
 
     send_and_recv(network, packet, |packet| {
-        matches!(packet, Packet::ConnAck(..))
+        match &packet {
+            Packet::ConnAck(connack, _) => {
+                eprintln!("[bridge] CONNACK received: code={:?}", connack.code);
+                true
+            }
+            other => {
+                eprintln!("[bridge] Expected CONNACK, got: {:?}", other);
+                false
+            }
+        }
     })
     .await?;
 
@@ -286,7 +399,7 @@ async fn send_and_recv<F: FnOnce(Packet) -> bool, P: Protocol>(
     send_packet: Packet,
     accept_recv: F,
 ) -> Result<(), BridgeError> {
-    network.write(send_packet).await.unwrap();
+    network.write(send_packet).await?;
     match accept_recv(network.read().await?) {
         true => Ok(()),
         false => Err(BridgeError::InvalidPacket),

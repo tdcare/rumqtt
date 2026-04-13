@@ -141,6 +141,9 @@ pub struct BridgeConfig {
     pub connections: ConnectionSettings,
     #[serde(default)]
     pub transport: Transport,
+    pub ws_path: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -233,6 +236,13 @@ pub enum Transport {
     Tcp,
     #[serde(rename = "tls")]
     Tls {
+        ca: PathBuf,
+        client_auth: Option<ClientAuth>,
+    },
+    #[serde(rename = "ws")]
+    Ws,
+    #[serde(rename = "wss")]
+    Wss {
         ca: PathBuf,
         client_auth: Option<ClientAuth>,
     },

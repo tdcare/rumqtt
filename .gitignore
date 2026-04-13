@@ -57,3 +57,11 @@ pids
 # dotenv environment variable files
 .env
 .env.*
+
+# ================
+# ANDROID
+# ================
+.gradle/
+**/build/
+local.properties
+*.apk

@@ -54,6 +54,16 @@ class BrokerActivity : Activity() {
                 max_inflight_count = 100
                 dynamic_filters = true
 
+            [ws.1]
+            name = "ws-1"
+            listen = "0.0.0.0:8083"
+            next_connection_delay_ms = 1
+                [ws.1.connections]
+                connection_timeout_ms = 60000
+                max_payload_size = 20480
+                max_inflight_count = 100
+                dynamic_filters = true
+
             [console]
             listen = "0.0.0.0:3030"
 
@@ -62,6 +72,23 @@ class BrokerActivity : Activity() {
                 push_interval = 1
                 [metrics.alerts]
                 push_interval = 1
+
+            [bridge]
+            name = "cloud-bridge"
+            addr = "tdtest.tdcare.cn:6015"
+            qos = 1
+            sub_path = "#"
+            reconnection_delay = 5
+            ping_delay = 30
+            transport = "ws"
+            ws_path = "/mqtt"
+            username = "cdo"
+            password = "Tdcarefor123"
+                [bridge.connections]
+                connection_timeout_ms = 60000
+                max_payload_size = 20480
+                max_inflight_count = 500
+                dynamic_filters = true
         """.trimIndent()
     }
 
@@ -190,7 +217,7 @@ class BrokerActivity : Activity() {
                 btnToggle.isEnabled = true
                 btnToggle.text = "关闭"
                 updateStatusIndicator(true)
-                tvListenAddress.text = "监听地址: $ip:1883"
+                tvListenAddress.text = "TCP: $ip:1883 | WS: $ip:8083"
                 // 开始轮询
                 handler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
             }
