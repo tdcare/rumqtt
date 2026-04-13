@@ -8,7 +8,28 @@ use std::{
     sync::Arc,
 };
 
-use std::{io, net::AddrParseError, time::Duration};
+use std::{collections::HashSet, io, net::AddrParseError, time::Duration};
+
+/// Write bridge debug log to Android logcat via NDK __android_log_print
+#[cfg(target_os = "android")]
+#[link(name = "log")]
+extern "C" {
+    fn __android_log_write(prio: std::ffi::c_int, tag: *const std::ffi::c_char, text: *const std::ffi::c_char) -> std::ffi::c_int;
+}
+
+fn bridge_log(msg: &str) {
+    eprintln!("{}", msg);
+    #[cfg(target_os = "android")]
+    {
+        use std::ffi::CString;
+        let tag = CString::new("rumqttd-bridge").unwrap();
+        if let Ok(c_msg) = CString::new(msg) {
+            unsafe {
+                __android_log_write(4 /* INFO */, tag.as_ptr(), c_msg.as_ptr());
+            }
+        }
+    }
+}
 
 use tokio::{
     net::TcpStream,
@@ -32,7 +53,7 @@ use tracing::*;
 use crate::{
     link::{local::LinkError, network::Network},
     local::LinkBuilder,
-    protocol::{self, Connect, Login, Packet, PingReq, Protocol, QoS, RetainForwardRule, Subscribe},
+    protocol::{self, Connect, Login, Packet, PingReq, Protocol, QoS, RetainForwardRule, Subscribe, SubscribeReasonCode},
     router::Event,
     BridgeConfig, ConnectionId, Notification, Transport,
 };
@@ -64,8 +85,8 @@ where
     let span = tracing::info_span!("bridge_link");
     let _guard = span.enter();
 
-    eprintln!("[bridge] Starting bridge '{}' -> {} sub='{}' transport={:?}",
-        config.name, config.addr, config.sub_path, config.transport);
+    bridge_log(&format!("[bridge] Starting bridge '{}' -> {} sub='{}' transport={:?}",
+        config.name, config.addr, config.sub_path, config.transport));
     info!(
         client_id = config.name,
         remote_addr = &config.addr,
@@ -76,20 +97,40 @@ where
         .dynamic_filters(true)
         .build()?;
 
+    // Subscribe to local topics for local→remote forwarding
+    if let Some(ref forward_filter) = config.forward_path {
+        bridge_log(&format!("[bridge] Subscribing locally to forward_path='{}'", forward_filter));
+        tx.subscribe(forward_filter.clone())?;
+    }
+
+    // --- Dedup: prevent infinite loop for bridged messages ---
+    // Records (topic, payload_hash) of messages received from remote.
+    // When the local router echoes them back, we skip forwarding to remote.
+    fn simple_hash(data: &[u8]) -> u64 {
+        let mut h: u64 = 0;
+        for &b in data {
+            h = h.wrapping_mul(31).wrapping_add(b as u64);
+        }
+        h
+    }
+    let mut remote_originated: HashSet<(String, u64)> = HashSet::new();
+    let mut local_originated: HashSet<(String, u64)> = HashSet::new();
+    const DEDUP_MAX: usize = 1000;
+
     'outer: loop {
         let mut network = match network_connect(&config, &config.addr, protocol.clone()).await {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[bridge] Connection error: {:?}", e);
+                bridge_log(&format!("[bridge] Connection error: {:?}", e));
                 error!(error=?e, "Error, retrying");
                 sleep(Duration::from_secs(config.reconnection_delay)).await;
                 continue;
             }
         };
         info!(remote_addr = &config.addr, "Connected to remote");
-        eprintln!("[bridge] TCP/WS connected to {}", config.addr);
+        bridge_log(&format!("[bridge] TCP/WS connected to {}", config.addr));
         if let Err(e) = network_init(&config, &mut network).await {
-            eprintln!("[bridge] network_init error: {:?}", e);
+            bridge_log(&format!("[bridge] network_init error: {:?}", e));
             warn!(
                 "Unable to connect and subscribe to remote broker, reconnecting - {}",
                 e
@@ -100,7 +141,7 @@ where
 
         let ping_req = Packet::PingReq(PingReq);
         debug!("Received suback from {}", &config.addr);
-        eprintln!("[bridge] CONNECT+SUBSCRIBE OK, entering main loop for {}", config.addr);
+        bridge_log(&format!("[bridge] CONNECT+SUBSCRIBE OK, entering main loop for {}", config.addr));
 
         let mut ping_time = Instant::now();
         let mut timeout = sleep_until(ping_time + Duration::from_secs(config.ping_delay));
@@ -114,6 +155,7 @@ where
                     let packet = match packet_res {
                         Ok(v) => v,
                         Err(e) => {
+                            bridge_log(&format!("[bridge] read error, reconnecting: {}", e));
                             warn!("Unable to read from network stream, reconnecting - {}", e);
                             sleep(Duration::from_secs(config.reconnection_delay)).await;
                             continue 'outer;
@@ -122,6 +164,23 @@ where
 
                     match packet {
                         Packet::Publish(publish, publish_prop) => {
+                            let topic_str = std::str::from_utf8(&publish.topic).unwrap_or("<non-utf8>");
+                            bridge_log(&format!("[bridge] Remote→Local: topic='{}' qos={:?} pkid={} payload_len={}",
+                                topic_str, publish.qos, publish.pkid, publish.payload.len()));
+
+                            // Dedup: skip if this message was originally sent from local
+                            let dedup_key = (topic_str.to_string(), simple_hash(&publish.payload));
+                            if local_originated.remove(&dedup_key) {
+                                bridge_log(&format!("[bridge] Dedup: skipping echo from remote (local originated), topic='{}'", topic_str));
+                                continue;
+                            }
+
+                            // Dedup: record this message so we skip it when local echoes back
+                            if remote_originated.len() >= DEDUP_MAX {
+                                remote_originated.clear();
+                            }
+                            remote_originated.insert(dedup_key);
+
                             if let Err(e) = tx.send(Packet::Publish(publish, publish_prop)).await {
                                 error!(error=?e, "Failed to forward publish to local router, reconnecting");
                                 sleep(Duration::from_secs(config.reconnection_delay)).await;
@@ -129,6 +188,9 @@ where
                             }
                         }
                         Packet::PingResp(_) => ping_unacked = false,
+                        Packet::PubAck(puback, _) => {
+                            bridge_log(&format!("[bridge] Remote PubAck pkid={}", puback.pkid));
+                        }
                         // TODO: Handle incoming pubrel incase of QoS subscribe
                         packet => warn!("Expected publish, got {:?}", packet),
                     }
@@ -144,11 +206,58 @@ where
                     };
                     if let Some(notif) = notif {
                         match notif {
-                            Notification::DeviceAck(ack) => {
-                                if let Err(e) = network.write(ack.into()).await {
-                                    warn!("Failed to write ack to remote, reconnecting - {}", e);
+                            Notification::Forward(forward) => {
+                                // Dedup: skip if this message originated from remote
+                                let topic_str = std::str::from_utf8(&forward.publish.topic).unwrap_or("<non-utf8>");
+                                let dedup_key = (topic_str.to_string(), simple_hash(&forward.publish.payload));
+                                if remote_originated.remove(&dedup_key) {
+                                    bridge_log(&format!("[bridge] Dedup: skipping echo back to remote, topic='{}'", topic_str));
+                                    timeout = sleep_until(ping_time + Duration::from_secs(config.ping_delay));
+                                    continue;
+                                }
+
+                                // Local→remote: forward locally published messages to remote broker
+                                let packet = Packet::Publish(forward.publish, forward.properties);
+                                bridge_log("[bridge] Forwarding local publish to remote");
+
+                                // Dedup: record so we skip when remote echoes it back
+                                if local_originated.len() >= DEDUP_MAX {
+                                    local_originated.clear();
+                                }
+                                local_originated.insert(dedup_key);
+
+                                if let Err(e) = network.write(packet).await {
+                                    warn!("Failed to forward publish to remote, reconnecting - {}", e);
                                     sleep(Duration::from_secs(config.reconnection_delay)).await;
                                     continue 'outer;
+                                }
+                            },
+                            Notification::DeviceAck(ack) => {
+                                // Only forward publish-related acks to remote.
+                                // SubAck/ConnAck/UnsubAck are local router acks
+                                // and must NOT be sent to the remote broker
+                                // (they are server→client packets in MQTT).
+                                use crate::router::Ack;
+                                match &ack {
+                                    Ack::PubAck(_) | Ack::PubAckWithProperties(_, _) |
+                                    Ack::PubRec(_) | Ack::PubRecWithProperties(_, _) |
+                                    Ack::PubRel(_) | Ack::PubRelWithProperties(_, _) |
+                                    Ack::PubComp(_) | Ack::PubCompWithProperties(_, _) => {
+                                        if let Err(e) = network.write(ack.into()).await {
+                                            warn!("Failed to write ack to remote, reconnecting - {}", e);
+                                            sleep(Duration::from_secs(config.reconnection_delay)).await;
+                                            continue 'outer;
+                                        }
+                                    }
+                                    other => {
+                                        bridge_log(&format!("[bridge] Dropping non-publish ack (not forwarding to remote): {:?}", other));
+                                    }
+                                }
+                            },
+                            Notification::Unschedule => {
+                                // Router signals there's more data; wake to continue receiving
+                                if let Err(e) = rx.wake().await {
+                                    warn!("Failed to wake link_rx: {}", e);
                                 }
                             },
                             other => warn!("Unexpected notification from router: {:?}", other),
@@ -161,6 +270,7 @@ where
                 _ = timeout => {
                     // retry connection if ping not acked till next timeout
                     if ping_unacked {
+                        bridge_log("[bridge] Ping timeout, reconnecting");
                         warn!("No response to previous ping, reconnecting");
                         sleep(Duration::from_secs(config.reconnection_delay)).await;
                         continue 'outer;
@@ -216,12 +326,12 @@ async fn network_connect<P: Protocol>(
         }
         #[cfg(feature = "websocket")]
         Transport::Ws => {
-            eprintln!("[bridge] WS: connecting TCP to {}", addr);
+            bridge_log("[bridge] WS: connecting TCP");
             let tcp = TcpStream::connect(addr).await?;
-            eprintln!("[bridge] WS: TCP connected, starting WebSocket handshake");
+            bridge_log("[bridge] WS: TCP connected");
             let ws_path = config.ws_path.as_deref().unwrap_or("/mqtt");
             let url = format!("ws://{}{}", addr, ws_path);
-            eprintln!("[bridge] WS: url={}", url);
+            bridge_log(&format!("[bridge] WS: url={}", url));
             let mut request = url.into_client_request().map_err(|e| {
                 io::Error::new(io::ErrorKind::InvalidInput, format!("WebSocket request error: {}", e))
             })?;
@@ -236,7 +346,7 @@ async fn network_connect<P: Protocol>(
             let (ws_stream, _response) = client_async_with_config(request, tcp, Some(ws_config))
                 .await
                 .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, format!("WebSocket handshake error: {}", e)))?;
-            eprintln!("[bridge] WS: handshake OK");
+            bridge_log("[bridge] WS: handshake OK");
             let ws_stream = WsStream::new(ws_stream);
             Ok(Network::new(
                 Box::new(ws_stream),
@@ -351,19 +461,19 @@ async fn network_init<P: Protocol>(
         password: config.password.clone().unwrap_or_default(),
     });
 
-    eprintln!("[bridge] network_init: sending CONNECT client_id='{}' keep_alive={} login={:?}",
-        config.name, keep_alive, login.as_ref().map(|l| &l.username));
+    bridge_log(&format!("[bridge] network_init: CONNECT client_id='{}' login={:?}",
+        config.name, login.as_ref().map(|l| &l.username)));
 
     let packet = Packet::Connect(connect, None, None, None, login);
 
     send_and_recv(network, packet, |packet| {
         match &packet {
             Packet::ConnAck(connack, _) => {
-                eprintln!("[bridge] CONNACK received: code={:?}", connack.code);
+                bridge_log(&format!("[bridge] CONNACK received: code={:?}", connack.code));
                 true
             }
             other => {
-                eprintln!("[bridge] Expected CONNACK, got: {:?}", other);
+                bridge_log(&format!("[bridge] Expected CONNACK, got: {:?}", other));
                 false
             }
         }
@@ -386,10 +496,30 @@ async fn network_init<P: Protocol>(
         retain_forward_rule: RetainForwardRule::Never,
     }];
 
-    let subscribe = Subscribe { pkid: 0, filters };
+    // MQTT spec requires non-zero pkid for SUBSCRIBE packets
+    let subscribe = Subscribe { pkid: 1, filters };
     let packet = Packet::Subscribe(subscribe, None);
+    bridge_log(&format!("[bridge] Sending SUBSCRIBE pkid=1 sub_path='{}'", config.sub_path));
     send_and_recv(network, packet, |packet| {
-        matches!(packet, Packet::SubAck(..))
+        match &packet {
+            Packet::SubAck(suback, _) => {
+                bridge_log(&format!("[bridge] SUBACK received: pkid={} return_codes={:?}", suback.pkid, suback.return_codes));
+                // Check all return codes are success (not Failure/0x80)
+                let all_ok = suback.return_codes.iter().all(|rc| {
+                    !matches!(rc, SubscribeReasonCode::Failure | SubscribeReasonCode::Unspecified
+                        | SubscribeReasonCode::NotAuthorized | SubscribeReasonCode::TopicFilterInvalid
+                        | SubscribeReasonCode::ImplementationSpecific)
+                });
+                if !all_ok {
+                    bridge_log("[bridge] SUBACK contains failure return codes! Subscription rejected by remote.");
+                }
+                all_ok
+            }
+            other => {
+                bridge_log(&format!("[bridge] Expected SUBACK, got: {:?}", other));
+                false
+            }
+        }
     })
     .await
 }

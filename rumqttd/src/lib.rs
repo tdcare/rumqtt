@@ -136,6 +136,10 @@ pub struct BridgeConfig {
     pub addr: String,
     pub qos: u8,
     pub sub_path: Filter,
+    /// Local topic filter to subscribe and forward to remote broker.
+    /// If set, messages matching this filter published locally will be
+    /// forwarded to the remote broker (local → remote direction).
+    pub forward_path: Option<Filter>,
     pub reconnection_delay: u64,
     pub ping_delay: u64,
     pub connections: ConnectionSettings,

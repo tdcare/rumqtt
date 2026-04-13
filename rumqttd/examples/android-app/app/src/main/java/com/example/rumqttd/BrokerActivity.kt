@@ -77,7 +77,8 @@ class BrokerActivity : Activity() {
             name = "cloud-bridge"
             addr = "tdtest.tdcare.cn:6015"
             qos = 1
-            sub_path = "#"
+            sub_path = "smartward/#"
+            forward_path = "smartward/#"
             reconnection_delay = 5
             ping_delay = 30
             transport = "ws"
