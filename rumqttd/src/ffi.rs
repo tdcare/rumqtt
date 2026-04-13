@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::thread::JoinHandle;
 
 use flume::Sender;
@@ -14,6 +14,36 @@ use crate::link::alerts::AlertsLink;
 use crate::link::meters::MetersLink;
 use crate::router::{ConnectionInfo, Event};
 use crate::{Broker, Config, ConnectionId};
+
+/// Initialize logging/tracing exactly once across all FFI calls.
+///
+/// On Android: uses `android_logger` to route log output to logcat,
+/// then bridges tracing events to the `log` crate via `tracing_log`.
+/// On other platforms: uses `tracing_subscriber` with env-filter.
+static INIT_LOGGING: Once = Once::new();
+
+fn init_logging_once() {
+    INIT_LOGGING.call_once(|| {
+        #[cfg(target_os = "android")]
+        {
+            android_logger::init_once(
+                android_logger::Config::default()
+                    .with_max_level(log::LevelFilter::Info)
+                    .with_tag("rumqttd"),
+            );
+            // Bridge tracing events → log crate → android logcat
+            let _ = tracing_log::LogTracer::init();
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            use tracing_subscriber::{fmt, EnvFilter};
+            let filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("rumqttd=info"));
+            fmt().with_env_filter(filter).init();
+        }
+    });
+}
 
 /// Opaque handle exposed to C callers.
 ///
@@ -70,6 +100,8 @@ fn to_json_c_string<T: serde::Serialize>(value: &T) -> *mut c_char {
 #[no_mangle]
 pub unsafe extern "C" fn rumqttd_create(config_toml: *const c_char) -> *mut RumqttdBroker {
     let result = catch_unwind(AssertUnwindSafe(|| {
+        init_logging_once();
+
         if config_toml.is_null() {
             set_last_error("config_toml pointer is null");
             return std::ptr::null_mut();
