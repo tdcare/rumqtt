@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "rumqttd MQTT Broker Module"
+    },
+    {
+      "name": "ability_desc",
+      "value": "rumqttd Broker Management"
+    },
+    {
+      "name": "app_name",
+      "value": "rumqttd Broker"
+    }
+  ]
+}

@@ -22,7 +22,7 @@
 在项目根目录下使用交叉编译脚本：
 
 ```powershell
-cd rumqttd
+cd rumqttd\src\android
 .\build_android.ps1
 ```
 

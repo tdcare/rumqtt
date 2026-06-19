@@ -1,0 +1,22 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    "arkOptions": {
+      "runtimeOnly": {
+        "sources": [],
+        "packages": []
+      }
+    },
+    "nativeLib": {
+      "debugSymbol": {
+        "strip": true
+      }
+    }
+  },
+  "targets": [
+    {
+      "name": "default",
+      "runtimeOS": "OpenHarmony"
+    }
+  ]
+}

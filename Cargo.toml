@@ -5,6 +5,12 @@ members = [
   "benchmarks",
   "benchmarks/simplerouter",
 ]
+exclude = [
+  "rumqttc/src/ohos",
+  "rumqttc/src/android",
+  "rumqttd/src/ohos",
+  "rumqttd/src/android",
+]
 resolver = "2"
 
 [workspace.package]

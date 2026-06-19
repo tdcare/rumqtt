@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "rumqttc-android"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+rumqttc = { path = "../../", default-features = false, features = ["websocket", "use-rustls"] }
+url = "2.5"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+log = "0.4"

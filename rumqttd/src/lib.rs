@@ -27,7 +27,7 @@ pub use server::{Broker, LinkType, Server};
 
 pub use self::router::shared_subs::Strategy;
 
-pub mod ffi;
+pub mod android;
 mod link;
 pub mod protocol;
 mod router;

@@ -1,0 +1,27 @@
+[package]
+name = "rumqttd-napi"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi-ohos = { version = "1", features = ["async", "napi4", "tokio_rt"] }
+napi-derive-ohos = "1"
+rumqttd = { path = "../../", default-features = false, features = ["use-rustls", "websocket"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml = "0.8"
+flume = "0.11"
+
+[build-dependencies]
+napi-build-ohos = "1"
+
+[patch.crates-io]
+quanta = { path = "./quanta-patch" }

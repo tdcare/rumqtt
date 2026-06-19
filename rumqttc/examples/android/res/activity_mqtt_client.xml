@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    MQTT 客户端控制界面布局
+    Material Design 风格，包含：标题栏、连接配置、订阅/发布区、消息列表、日志区
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5">
+
+    <!-- 顶部标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="#1976D2"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:elevation="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="MQTT 客户端"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <!-- 状态指示 -->
+        <View
+            android:id="@+id/view_status_dot"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="#F44336"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="未连接"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- ========== 连接配置卡片 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/white"
+                android:elevation="2dp"
+                android:padding="12dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="连接配置"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#333333"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/et_broker_url"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:hint="Broker 地址"
+                    android:text="tcp://192.168.1.48:1883"
+                    android:textSize="14sp"
+                    android:inputType="textUri"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:background="@android:drawable/edit_text"
+                    android:layout_marginBottom="6dp" />
+
+                <EditText
+                    android:id="@+id/et_client_id"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:hint="客户端 ID"
+                    android:text="rumqttc-android"
+                    android:textSize="14sp"
+                    android:inputType="text"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:background="@android:drawable/edit_text"
+                    android:layout_marginBottom="6dp" />
+
+                <!-- 用户名/密码（一行两个） -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <EditText
+                        android:id="@+id/et_username"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:hint="用户名（可选）"
+                        android:textSize="14sp"
+                        android:inputType="text"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:background="@android:drawable/edit_text"
+                        android:layout_marginEnd="6dp" />
+
+                    <EditText
+                        android:id="@+id/et_password"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:hint="密码（可选）"
+                        android:textSize="14sp"
+                        android:inputType="textPassword"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:background="@android:drawable/edit_text" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_connect"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:text="连接"
+                    android:textSize="16sp"
+                    android:background="#1976D2"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <!-- ========== 订阅区卡片 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/white"
+                android:elevation="2dp"
+                android:padding="12dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="订阅管理"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#333333"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <EditText
+                        android:id="@+id/et_sub_topic"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:hint="主题，如 test/#"
+                        android:text="test/#"
+                        android:textSize="14sp"
+                        android:inputType="text"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:background="@android:drawable/edit_text"
+                        android:layout_marginEnd="6dp" />
+
+                    <Spinner
+                        android:id="@+id/spinner_sub_qos"
+                        android:layout_width="90dp"
+                        android:layout_height="40dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_subscribe"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:text="订阅"
+                        android:textSize="14sp"
+                        android:background="#4CAF50"
+                        android:textColor="#FFFFFF"
+                        android:enabled="false"
+                        android:layout_marginEnd="6dp" />
+
+                    <Button
+                        android:id="@+id/btn_unsubscribe"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:text="取消订阅"
+                        android:textSize="14sp"
+                        android:background="#FF9800"
+                        android:textColor="#FFFFFF"
+                        android:enabled="false" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ========== 发布区卡片 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/white"
+                android:elevation="2dp"
+                android:padding="12dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="发布消息"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#333333"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/et_pub_topic"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:hint="发布主题"
+                    android:text="test/hello"
+                    android:textSize="14sp"
+                    android:inputType="text"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:background="@android:drawable/edit_text"
+                    android:layout_marginBottom="6dp" />
+
+                <EditText
+                    android:id="@+id/et_pub_payload"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:hint="消息内容"
+                    android:text="Hello from rumqttc!"
+                    android:textSize="14sp"
+                    android:inputType="textMultiLine"
+                    android:gravity="top"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="6dp"
+                    android:background="@android:drawable/edit_text"
+                    android:layout_marginBottom="6dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <Spinner
+                        android:id="@+id/spinner_pub_qos"
+                        android:layout_width="90dp"
+                        android:layout_height="40dp" />
+
+                    <CheckBox
+                        android:id="@+id/cb_retain"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Retain"
+                        android:textSize="14sp"
+                        android:layout_marginStart="8dp" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        android:id="@+id/btn_publish"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:text="发布"
+                        android:textSize="14sp"
+                        android:paddingStart="32dp"
+                        android:paddingEnd="32dp"
+                        android:background="#1976D2"
+                        android:textColor="#FFFFFF"
+                        android:enabled="false" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ========== 收到的消息 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/white"
+                android:elevation="2dp"
+                android:padding="12dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="收到的消息"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#333333"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_empty_messages"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="暂无消息"
+                    android:textSize="13sp"
+                    android:textColor="#BBBBBB"
+                    android:visibility="visible" />
+
+                <ScrollView
+                    android:id="@+id/sv_messages"
+                    android:layout_width="match_parent"
+                    android:layout_height="160dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/ll_messages"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </ScrollView>
+            </LinearLayout>
+
+            <!-- ========== 日志区 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/white"
+                android:elevation="2dp"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="日志"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#333333"
+                    android:layout_marginBottom="8dp" />
+
+                <ScrollView
+                    android:id="@+id/sv_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:background="#FAFAFA">
+
+                    <TextView
+                        android:id="@+id/tv_log"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textSize="12sp"
+                        android:textColor="#666666"
+                        android:fontFamily="monospace"
+                        android:padding="8dp" />
+                </ScrollView>
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>
