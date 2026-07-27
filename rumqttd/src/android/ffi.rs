@@ -526,3 +526,126 @@ pub unsafe extern "C" fn rumqttd_free_string(s: *mut c_char) {
         let _ = CString::from_raw(s);
     }));
 }
+
+// ============================================================
+// JNI 层 — 供 Android Kotlin/Java 直接调用
+// 对应 Kotlin 类: cn.tdcare.smartward.rust.broker.RumqttdBroker
+// ============================================================
+
+#[cfg(target_os = "android")]
+mod jni_bridge {
+    use super::*;
+    use jni::sys::{jint, jlong, jstring};
+    use jni::objects::{JClass, JString};
+    use jni::JNIEnv;
+
+    /// 将 JString 转为 Rust String
+    fn jstring_to_rust(env: &mut JNIEnv, s: &JString) -> String {
+        env.get_string(s)
+            .map(|js| js.into())
+            .unwrap_or_default()
+    }
+
+    /// 将 C 字符串指针转为 Java String（并释放 C 字符串）
+    unsafe fn c_ptr_to_jstring(env: &mut JNIEnv, ptr: *mut c_char) -> jstring {
+        if ptr.is_null() {
+            return env.new_string("[]").unwrap().into_raw();
+        }
+        let c_str = CStr::from_ptr(ptr);
+        let result = env.new_string(c_str.to_string_lossy()).unwrap().into_raw();
+        // 释放 C 字符串
+        let _ = CString::from_raw(ptr);
+        result
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeCreate(
+        mut env: JNIEnv,
+        _class: JClass,
+        config_toml: JString,
+    ) -> jlong {
+        let config = jstring_to_rust(&mut env, &config_toml);
+        let c_config = match CString::new(config) {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        let ptr = unsafe { rumqttd_create(c_config.as_ptr()) };
+        ptr as jlong
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeStart(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        unsafe { rumqttd_start(handle as *mut RumqttdBroker); }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeStop(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        unsafe { rumqttd_stop(handle as *mut RumqttdBroker); }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeGetConnectionCount(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        let ptr = unsafe { rumqttd_get_connections(handle as *mut RumqttdBroker) };
+        if ptr.is_null() {
+            return 0;
+        }
+        let c_str = unsafe { CStr::from_ptr(ptr) };
+        let count = match serde_json::from_str::<serde_json::Value>(&c_str.to_string_lossy()) {
+            Ok(serde_json::Value::Array(arr)) => arr.len() as jint,
+            _ => 0,
+        };
+        unsafe { let _ = CString::from_raw(ptr); }
+        count
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeGetConnections(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let ptr = unsafe { rumqttd_get_connections(handle as *mut RumqttdBroker) };
+        unsafe { c_ptr_to_jstring(&mut env, ptr) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeGetMeters(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let ptr = unsafe { rumqttd_get_meters(handle as *mut RumqttdBroker) };
+        unsafe { c_ptr_to_jstring(&mut env, ptr) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeGetAlerts(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let ptr = unsafe { rumqttd_get_alerts(handle as *mut RumqttdBroker) };
+        unsafe { c_ptr_to_jstring(&mut env, ptr) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_broker_RumqttdBroker_nativeDestroy(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        unsafe { rumqttd_free(handle as *mut RumqttdBroker); }
+    }
+}

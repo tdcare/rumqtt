@@ -696,3 +696,156 @@ pub unsafe extern "C" fn rumqttc_last_error() -> *const c_char {
         Err(_) => std::ptr::null(),
     }
 }
+
+// ============================================================
+// JNI exports for Android (Kotlin class:
+// cn.tdcare.smartward.rust.mqtt.RumqttcClient)
+//
+// Thin wrappers over the C ABI above. Kept in sync with
+// smartward-rust-bridge/src/main/java/.../mqtt/RumqttcClient.kt
+// ============================================================
+
+#[cfg(target_os = "android")]
+mod android_jni {
+    use super::*;
+    use jni::objects::{JByteArray, JClass, JString};
+    use jni::sys::{jbyteArray, jint, jlong, jstring};
+    use jni::JNIEnv;
+
+    /// Convert a JString to CString (empty string treated as empty, never fails hard)
+    fn jstring_to_cstring(env: &mut JNIEnv, s: &JString) -> CString {
+        let rust_str: String = env
+            .get_string(s)
+            .map(|js| js.into())
+            .unwrap_or_default();
+        CString::new(rust_str).unwrap_or_default()
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeCreate(
+        mut env: JNIEnv,
+        _class: JClass,
+        broker_url: JString,
+        client_id: JString,
+        username: JString,
+        password: JString,
+        keep_alive_secs: jint,
+        clean_session: jint,
+    ) -> jlong {
+        let url = jstring_to_cstring(&mut env, &broker_url);
+        let id = jstring_to_cstring(&mut env, &client_id);
+        let user = jstring_to_cstring(&mut env, &username);
+        let pass = jstring_to_cstring(&mut env, &password);
+
+        // Empty username/password mean "no credentials" — pass NULL
+        let user_ptr = if user.as_bytes().is_empty() { std::ptr::null() } else { user.as_ptr() };
+        let pass_ptr = if pass.as_bytes().is_empty() { std::ptr::null() } else { pass.as_ptr() };
+
+        let handle = unsafe {
+            rumqttc_create(
+                url.as_ptr(),
+                id.as_ptr(),
+                user_ptr,
+                pass_ptr,
+                keep_alive_secs.max(0) as u32,
+                clean_session as c_int,
+            )
+        };
+        handle as jlong
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeFree(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        unsafe { rumqttc_free(handle as *mut RumqttcClient) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeSubscribe(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        topic: JString,
+        qos: jint,
+    ) -> jint {
+        let topic_c = jstring_to_cstring(&mut env, &topic);
+        unsafe { rumqttc_subscribe(handle as *mut RumqttcClient, topic_c.as_ptr(), qos as c_int) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeUnsubscribe(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        topic: JString,
+    ) -> jint {
+        let topic_c = jstring_to_cstring(&mut env, &topic);
+        unsafe { rumqttc_unsubscribe(handle as *mut RumqttcClient, topic_c.as_ptr()) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativePublish(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        topic: JString,
+        payload: jbyteArray,
+        qos: jint,
+        retain: jint,
+    ) -> jint {
+        let topic_c = jstring_to_cstring(&mut env, &topic);
+        let payload_arr = unsafe { JByteArray::from_raw(payload) };
+        let bytes: Vec<u8> = env
+            .convert_byte_array(&payload_arr)
+            .unwrap_or_default();
+        unsafe {
+            rumqttc_publish(
+                handle as *mut RumqttcClient,
+                topic_c.as_ptr(),
+                if bytes.is_empty() { std::ptr::null() } else { bytes.as_ptr() },
+                bytes.len() as u32,
+                qos as c_int,
+                retain as c_int,
+            )
+        }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeDisconnect(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        unsafe { rumqttc_disconnect(handle as *mut RumqttcClient) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativeIsConnected(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        unsafe { rumqttc_is_connected(handle as *mut RumqttcClient) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_cn_tdcare_smartward_rust_mqtt_RumqttcClient_nativePollAllEvents(
+        env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let ptr = unsafe { rumqttc_poll_all_events(handle as *mut RumqttcClient) };
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let json = unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() };
+        unsafe { rumqttc_free_string(ptr) };
+        match env.new_string(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}
