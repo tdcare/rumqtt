@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, Once};
 use std::thread;
 use std::time::Duration;
 
-use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, Outgoing, QoS, Transport};
+use rumqttc::tokio_rustls::rustls;
+use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, Outgoing, QoS, TlsConfiguration, Transport};
 
 // ============================================================
 // Logging initialization
@@ -32,6 +33,60 @@ fn init_logging_once() {
             let _ = std::io::stderr();
         }
     });
+}
+
+// ============================================================
+// TLS: skip certificate verification for internal CA
+// ============================================================
+
+/// A `ServerCertVerifier` that accepts any certificate.
+/// Used for internal test environments where the TLS cert is signed by a private CA.
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Build a WSS TLS config that skips certificate verification (internal CA).
+fn build_wss_tls_config() -> rustls::ClientConfig {
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+        .with_no_client_auth()
 }
 
 // ============================================================
@@ -302,7 +357,10 @@ pub unsafe extern "C" fn rumqttc_create(
 
             let mut options = MqttOptions::new(id_str, url_str, port);
             if url_str.starts_with("wss://") {
-                options.set_transport(Transport::wss_with_default_config());
+                let tls_cfg = build_wss_tls_config();
+                options.set_transport(Transport::wss_with_config(
+                    TlsConfiguration::Rustls(Arc::new(tls_cfg)),
+                ));
             } else {
                 options.set_transport(Transport::Ws);
             }
